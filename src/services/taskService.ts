@@ -40,6 +40,11 @@ export async function fetchTasks(params: FetchTasksParams = {}): Promise<PagedTa
   return request<PagedTasksResponse>(url)
 }
 
+/** Fetch tasks from a HATEOAS link href (e.g. first, next, prev, last) */
+export async function fetchTasksByHref(href: string): Promise<PagedTasksResponse> {
+  return request<PagedTasksResponse>(href)
+}
+
 export async function fetchTaskById(id: number): Promise<Task> {
   return request<Task>(`${TASKS_BASE}/${id}`)
 }

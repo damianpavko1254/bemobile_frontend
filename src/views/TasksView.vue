@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import DataTable from 'primevue/datatable'
@@ -28,14 +28,26 @@ const router = useRouter()
 const toast = useToast()
 const confirm = useConfirm()
 
+function parseQuery(q: Record<string, unknown>) {
+  return {
+    page: q.page ? Math.max(0, parseInt(String(q.page), 10) || 0) : 0,
+    size: q.size ? Math.max(1, Math.min(50, parseInt(String(q.size), 10) || 10)) : 10,
+    title: q.title ? String(q.title) : '',
+    status: (q.status && ['TODO', 'IN_PROGRESS', 'DONE'].includes(String(q.status)))
+      ? (String(q.status) as TaskStatus)
+      : null as TaskStatus | null,
+  }
+}
+
 const tasks = ref<Task[]>([])
 const loading = ref(false)
 const totalElements = ref(0)
-const pageNumber = ref(0)
-const pageSize = ref(10)
+const totalPages = ref(0)
+const pageNumber = ref(parseQuery(route.query).page)
+const pageSize = ref(parseQuery(route.query).size)
 const links = ref<Record<string, { href: string }>>({})
-const searchTitle = ref('')
-const filterStatus = ref<TaskStatus | null>(null)
+const searchTitle = ref(parseQuery(route.query).title)
+const filterStatus = ref<TaskStatus | null>(parseQuery(route.query).status)
 const showFormDialog = ref(false)
 const editingTask = ref<Task | null>(null)
 const submitting = ref(false)
@@ -52,8 +64,8 @@ function formatDate(iso: string) {
   })
 }
 
-async function loadTasks() {
-  loading.value = true
+async function loadTasks(shouldLoad = true) {
+  if (shouldLoad) loading.value = true
   try {
     const res = await fetchTasks({
       page: pageNumber.value,
@@ -63,8 +75,17 @@ async function loadTasks() {
     })
     tasks.value = res._embedded?.tasks ?? []
     totalElements.value = res.page.totalElements
+    totalPages.value = res.page.totalPages
     pageNumber.value = res.page.number
+    pageSize.value = res.page.size
     links.value = res._links ?? {}
+    const newPage = String(res.page.number)
+    const newSize = String(res.page.size)
+    if (route.query.page !== newPage || route.query.size !== newSize) {
+      router.replace({
+        query: { ...route.query, page: newPage, size: newSize },
+      })
+    }
   } catch (e) {
     toast.add({
       severity: 'error',
@@ -72,13 +93,11 @@ async function loadTasks() {
       detail: e instanceof Error ? e.message : 'Failed to load tasks',
     })
   } finally {
-    loading.value = false
+    if (shouldLoad) loading.value = false
   }
 }
 
 function onPage(event: { page: number; rows: number }) {
-  pageNumber.value = event.page
-  pageSize.value = event.rows
   router.replace({
     query: {
       ...route.query,
@@ -102,14 +121,20 @@ async function onFormSubmit(payload: TaskRequest) {
   submitting.value = true
   try {
     if (editingTask.value) {
-      await updateTask(editingTask.value.id, payload)
+      const updated = await updateTask(editingTask.value.id, payload)
+      const idx = tasks.value.findIndex((t) => t.id === updated.id)
+      if (idx !== -1) tasks.value[idx] = updated
       toast.add({ severity: 'success', summary: 'Updated', detail: 'Task updated' })
     } else {
-      await createTask(payload)
+      const created = await createTask(payload)
+      totalElements.value += 1
+      if (pageNumber.value === 0) {
+        tasks.value = [created, ...tasks.value]
+        if (tasks.value.length > pageSize.value) tasks.value.pop()
+      }
       toast.add({ severity: 'success', summary: 'Created', detail: 'Task created' })
     }
     showFormDialog.value = false
-    loadTasks()
   } catch (e) {
     toast.add({
       severity: 'error',
@@ -163,19 +188,20 @@ function confirmDelete(task: Task, event: Event) {
   })
 }
 
-onMounted(() => {
-  const q = route.query
-  if (q.page) pageNumber.value = Math.max(0, parseInt(String(q.page), 10))
-  if (q.size) pageSize.value = Math.max(1, Math.min(50, parseInt(String(q.size), 10)))
-  if (q.title) searchTitle.value = String(q.title)
-  if (q.status && ['TODO', 'IN_PROGRESS', 'DONE'].includes(String(q.status))) {
-    filterStatus.value = String(q.status) as TaskStatus
-  }
-})
+function syncRefsFromRoute() {
+  const q = parseQuery(route.query)
+  pageNumber.value = q.page
+  pageSize.value = q.size
+  searchTitle.value = q.title
+  filterStatus.value = q.status
+}
 
 watch(
   () => [route.query.page, route.query.size, route.query.title, route.query.status],
-  () => loadTasks(),
+  () => {
+    syncRefsFromRoute()
+    loadTasks()
+  },
   { immediate: true }
 )
 
@@ -300,7 +326,7 @@ watch([searchTitle, filterStatus], () => {
                 option-label="label"
                 option-value="value"
                 class="status-select"
-                @update:model-value="(v: TaskStatus) => onStatusChange(data, v)"
+                @update:model-value="(v) => onStatusChange(data, v)"
               />
             </template>
           </Column>

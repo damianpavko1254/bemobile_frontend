@@ -53,6 +53,8 @@ npm run build
 npm run preview
 ```
 
+Serves the production build (default: http://localhost:4173). **Start the backend on port 8080 first** — the preview server proxies `/api` to it. If you see a WebSocket error in the console, it is usually from a browser extension (e.g. Live Reload) and can be ignored.
+
 ## Environment Variables
 
 | Variable | Description |
